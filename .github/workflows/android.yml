@@ -1,0 +1,67 @@
+name: Build APK
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install Android cmdline-tools & SDK (robust)
+        shell: bash
+        run: |
+          set +e
+          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "ANDROID_HOME=$HOME/android-sdk"      >> $GITHUB_ENV
+          export ANDROID_SDK_ROOT="$HOME/android-sdk"
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+          cd "$ANDROID_SDK_ROOT"
+          curl -fsSLo cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q cmdline-tools.zip -d cmdline-tools
+          if [ -d cmdline-tools/cmdline-tools/bin ]; then src="cmdline-tools/cmdline-tools"; else src="cmdline-tools"; fi
+          mkdir -p cmdline-tools/latest
+          mv "$src"/* cmdline-tools/latest/ 2>/dev/null || true
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_SDK_ROOT/platform-tools"           >> $GITHUB_PATH
+          SDKM="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          mkdir -p "$ANDROID_SDK_ROOT/licenses"
+          cat > "$ANDROID_SDK_ROOT/licenses/android-sdk-license" <<'EOF'
+          d56f5187479451eabf01fb78af6dfcb131a6481e
+          24333f8a63b6825ea9c5514f83c2829b004d1fee
+          EOF
+          cat > "$ANDROID_SDK_ROOT/licenses/android-sdk-preview-license" <<'EOF'
+          84831b9409646a918e30573bab4c9c91346d8abd
+          EOF
+          for p in "platform-tools" "platforms;android-34" "build-tools;34.0.0"; do
+            "$SDKM" --sdk_root="$ANDROID_SDK_ROOT" "$p" || "$SDKM" --sdk_root="$ANDROID_SDK_ROOT" "$p" || true
+          done
+
+      - name: Write local.properties (sdk.dir)
+        shell: bash
+        run: |
+          echo "sdk.dir=$HOME/android-sdk" > local.properties
+          cat local.properties
+
+      - name: Build with Gradle (no wrapper)
+        uses: gradle/gradle-build-action@v3
+        with:
+          gradle-version: 8.7
+          arguments: >
+            :app:assembleDebug
+            --stacktrace
+            --warning-mode all
+            --info
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/*.apk
